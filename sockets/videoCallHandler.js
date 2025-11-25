@@ -60,7 +60,7 @@ module.exports = function(socket, redis) {
                 const existingSocketId = await redis.hget(`videoroom:${roomId}:sockets`, userType);
                 if (existingSocketId && existingSocketId !== socket.id) {
                     // Có socket cũ → Disconnect socket cũ trước
-                    const oldSocket = videoNamespace.sockets.get(existingSocketId);
+                    const oldSocket = socket.server.sockets.sockets.get(existingSocketId);
                     if (oldSocket) {
                         console.log(`⚠️ User ${userId} (${userType}) đã có kết nối cũ ${existingSocketId}, disconnect socket cũ...`);
                         oldSocket.emit('force-disconnect', {
