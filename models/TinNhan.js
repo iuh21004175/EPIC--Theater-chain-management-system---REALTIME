@@ -18,7 +18,7 @@ const TinNhan = sequelize.define('TinNhan', {
         allowNull: false
     },
     loaiNoiDung: {
-        field: 'loai_noidung',
+        field: 'loai_noi_dung',
         type: DataTypes.INTEGER,
         defaultValue: 1
     },

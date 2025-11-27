@@ -28,14 +28,14 @@ module.exports = (subscriber, io, redis) => {
                     messageToSend = {
                         id: rawData.id,
                         msg: tinNhan.noiDung,
-                        loai_noidung: tinNhan.loaiNoiDung
+                        loai_noi_dung: tinNhan.loaiNoiDung
                     };
                 } else {
                     // Format mới
                     messageToSend = {
                         id: rawData.id_phienchat,
                         msg: tinNhan.noiDung,
-                        loai_noidung: tinNhan.loaiNoiDung
+                        loai_noi_dung: tinNhan.loaiNoiDung
                     };
                 }
                 
@@ -93,7 +93,7 @@ module.exports = (subscriber, io, redis) => {
             let messageToSend = {
                 id_phienchat,
                 noi_dung: tinNhan.noiDung,
-                loai_noidung: tinNhan.loaiNoiDung
+                loai_noi_dung: tinNhan.loaiNoiDung
                 // 
             };
             
