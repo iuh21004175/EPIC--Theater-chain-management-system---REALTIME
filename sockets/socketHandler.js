@@ -135,6 +135,28 @@ module.exports = (io, redis) => {
                 console.error('Error processing khach-hang-tu-van-gui-tin-nhan:', error);
             }
         });
+        
+        socket.on('khach-hang-mo-phien-chat', async (data) => {
+            try {
+                const { id, id_khachhang } = JSON.parse(data);
+                await redis.sadd('list-phien-chat-khach-hang-mo', id);
+                await redis.set(`khach-hang-${id_khachhang}-mo-phien-chat`, id);
+                console.log(`Khách hàng ${id_khachhang} đã mở phiên chat ${id}`);
+            } catch (error) {
+                console.error('Error processing khach-hang-mo-phien-chat:', error);
+            }
+        });
+        
+        socket.on('khach-hang-dong-phien-chat', async (data) => {
+            try {
+                const { id, id_khachhang } = JSON.parse(data);
+                await redis.srem('list-phien-chat-khach-hang-mo', id);
+                await redis.del(`khach-hang-${id_khachhang}-mo-phien-chat`);
+                console.log(`Khách hàng ${id_khachhang} đã đóng phiên chat ${id}`);
+            } catch (error) {
+                console.error('Error processing khach-hang-dong-phien-chat:', error);
+            }
+        });
         socket.on('nhan-vien-tham-gia-tu-van', async (data) => {
             try {
                 const {id} = JSON.parse(data);
