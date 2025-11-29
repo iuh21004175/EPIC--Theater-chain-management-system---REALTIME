@@ -8,41 +8,96 @@ module.exports = function(socket, redis) {
 
         // Client muốn tham gia room
         socket.on('join-room', async (data) => {
+            // Validate input
+            if (!data) {
+                socket.emit('join-error', { message: 'Dữ liệu không hợp lệ' });
+                return;
+            }
+
             const { roomId, userId, userType } = data;
+
+            if (!roomId || !userId || !userType) {
+                socket.emit('join-error', { message: 'Thiếu thông tin bắt buộc' });
+                return;
+            }
+
+            if (!['customer', 'staff'].includes(userType)) {
+                socket.emit('join-error', { message: 'userType không hợp lệ' });
+                return;
+            }
 
             console.log(`🔐 Kiểm tra quyền tham gia room: ${roomId}, User: ${userId}, Type: ${userType}`);
 
             try {
                 // Kiểm tra quyền từ Redis
-                const roomData = await redis.get(`videoroom:${roomId}`);
+                let roomData = await redis.get(`videoroom:${roomId}`);
                 
                 if (!roomData) {
-                    socket.emit('join-error', { message: 'Room không tồn tại hoặc đã hết hạn' });
-                    return;
+                    // ============================================
+                    // ROOM CHƯA TỒN TẠI → TẠO MỚI
+                    // ============================================
+                    console.log(`⚠️ Room ${roomId} chưa tồn tại, tạo room mới...`);
+                    
+                    // Tạo room data mặc định
+                    const newRoomInfo = {
+                        room_id: roomId,
+                        id_khachhang: userType === 'customer' ? userId : null,
+                        id_nhanvien: userType === 'staff' ? userId : null,
+                        created_at: new Date().toISOString(),
+                        created_by: userType
+                    };
+
+                    // Lưu vào Redis với TTL 1 giờ (3600 giây)
+                    await redis.setex(
+                        `videoroom:${roomId}`, 
+                        3600, 
+                        JSON.stringify(newRoomInfo)
+                    );
+
+                    console.log(`✅ Đã tạo room ${roomId} cho ${userType}`);
+                    roomData = JSON.stringify(newRoomInfo);
                 }
 
                 const roomInfo = JSON.parse(roomData);
 
-                // Kiểm tra quyền dựa vào user type
+                // ============================================
+                // Kiểm tra quyền truy cập
+                // ============================================
                 let allowed = false;
                 let reason = '';
 
                 if (userType === 'customer') {
-                    // Khách hàng: phải đúng khách hàng đặt lịch
-                    if (userId == roomInfo.id_khachhang) {
+                    // Nếu chưa có customer trong room → cho phép
+                    if (!roomInfo.id_khachhang || roomInfo.id_khachhang == userId) {
                         allowed = true;
+                        // Cập nhật customer ID nếu chưa có
+                        if (!roomInfo.id_khachhang) {
+                            roomInfo.id_khachhang = userId;
+                            await redis.setex(
+                                `videoroom:${roomId}`, 
+                                3600, 
+                                JSON.stringify(roomInfo)
+                            );
+                        }
                     } else {
                         reason = 'Bạn không có quyền tham gia cuộc gọi này';
                     }
                 } else if (userType === 'staff') {
-                    // Nhân viên: phải đúng nhân viên được chọn
-                    if (userId == roomInfo.id_nhanvien) {
+                    // Nếu chưa có staff trong room → cho phép
+                    if (!roomInfo.id_nhanvien || roomInfo.id_nhanvien == userId) {
                         allowed = true;
+                        // Cập nhật staff ID nếu chưa có
+                        if (!roomInfo.id_nhanvien) {
+                            roomInfo.id_nhanvien = userId;
+                            await redis.setex(
+                                `videoroom:${roomId}`, 
+                                3600, 
+                                JSON.stringify(roomInfo)
+                            );
+                        }
                     } else {
                         reason = 'Cuộc gọi này đã được nhân viên khác nhận';
                     }
-                } else {
-                    reason = 'Loại người dùng không hợp lệ';
                 }
 
                 if (!allowed) {
@@ -50,7 +105,9 @@ module.exports = function(socket, redis) {
                     return;
                 }
 
+                // ============================================
                 // Cho phép tham gia room
+                // ============================================
                 socket.join(roomId);
                 socket.roomId = roomId;
                 socket.userId = userId;
@@ -59,10 +116,9 @@ module.exports = function(socket, redis) {
                 // Kiểm tra xem đã có socket cũ của user này chưa
                 const existingSocketId = await redis.hget(`videoroom:${roomId}:sockets`, userType);
                 if (existingSocketId && existingSocketId !== socket.id) {
-                    // Có socket cũ → Disconnect socket cũ trước
                     const oldSocket = socket.server.sockets.sockets.get(existingSocketId);
                     if (oldSocket) {
-                        console.log(`⚠️ User ${userId} (${userType}) đã có kết nối cũ ${existingSocketId}, disconnect socket cũ...`);
+                        console.log(`⚠️ Disconnect socket cũ ${existingSocketId}`);
                         oldSocket.emit('force-disconnect', {
                             message: 'Bạn đã đăng nhập từ thiết bị khác'
                         });
@@ -70,8 +126,16 @@ module.exports = function(socket, redis) {
                     }
                 }
 
-                // Lưu socket ID MỚI vào Redis
+                // Lưu socket ID mới vào Redis
                 await redis.hset(`videoroom:${roomId}:sockets`, userType, socket.id);
+
+                // Gửi thông tin về những người đang trong room
+                const sockets = await redis.hgetall(`videoroom:${roomId}:sockets`);
+                socket.emit('room-joined', {
+                    roomId: roomId,
+                    participants: sockets,
+                    isFirstPerson: Object.keys(sockets).length === 1
+                });
 
                 // Thông báo cho người còn lại trong room
                 socket.to(roomId).emit('user-joined', {
@@ -80,38 +144,26 @@ module.exports = function(socket, redis) {
                     socketId: socket.id
                 });
 
-                // Gửi thông tin về những người đang trong room
-                const sockets = await redis.hgetall(`videoroom:${roomId}:sockets`);
-                socket.emit('room-joined', {
-                    roomId: roomId,
-                    participants: sockets
-                });
-
                 console.log(`✅ User ${userId} (${userType}) đã tham gia room ${roomId}`);
 
                 // Cập nhật trạng thái cuộc gọi nếu cả 2 đã vào
                 const participantCount = Object.keys(sockets).length;
                 if (participantCount >= 2) {
-                    // Gọi API để cập nhật trạng thái đang gọi
                     try {
                         const apiUrl = `${process.env.URL_API}/goi-video/bat-dau`;
-                        console.log('🔄 Đang gọi API cập nhật trạng thái:', apiUrl);
+                        console.log('🔄 Gọi API cập nhật trạng thái...');
                         const response = await axios.post(apiUrl, {
                             room_id: roomId
                         });
                         console.log('✅ API bat-dau response:', response.data);
                     } catch (err) {
                         console.error('❌ Lỗi gọi API bat-dau:', err.message);
-                        if (err.response) {
-                            console.error('Response status:', err.response.status);
-                            console.error('Response data:', err.response.data);
-                        }
                     }
                 }
 
             } catch (error) {
-                console.error('Lỗi khi join room:', error);
-                socket.emit('join-error', { message: 'Đã xảy ra lỗi' });
+                console.error('❌ Lỗi khi join room:', error);
+                socket.emit('join-error', { message: 'Đã xảy ra lỗi khi tham gia phòng' });
             }
         });
 
