@@ -34,12 +34,24 @@ module.exports = (io, redis) => {
                     const idPhienChat = await redis.get(`nhan-vien-${idNhanVien}-mo-phien-chat`);
                     console.log(`Staff ${idNhanVien} had open session: ${idPhienChat || 'none'}`);
                     
+                    // Xóa thông tin socket và nhân viên
                     await redis.del(`nhan-vien-${idNhanVien}`);
                     await redis.del(`socket-nhan-vien-${socketid}`);
                     
                     if (idPhienChat) {
+                        // Xóa thông tin phiên chat đang được mở bởi nhân viên này
+                        await redis.del(`phien-chat-${idPhienChat}-nhan-vien`);
                         await redis.srem('list-phien-chat-nhan-vien-mo', idPhienChat);
+                        await redis.del(`nhan-vien-${idNhanVien}-mo-phien-chat`);
+                        
                         console.log(`Removed session ${idPhienChat} from staff open sessions list`);
+                        console.log(`Released lock on session ${idPhienChat} due to staff ${idNhanVien} disconnect`);
+                        
+                        // Broadcast đến tất cả nhân viên khác rằng phiên chat đã được đóng
+                        io.to('room-nhan-vien-tu-van').emit('phien-chat-duoc-dong', JSON.stringify({
+                            id_phienchat: idPhienChat,
+                            id_nhanvien: idNhanVien
+                        }));
                     }
                 }
                 // Xóa danh sách ghế khách hàng
@@ -172,6 +184,69 @@ module.exports = (io, redis) => {
                 console.log(`Nhân viên ${id} tham gia tư vấn với socket ID: ${socket.id}`);
             } catch (error) {
                 console.error(`Error connecting staff ${data}:`, error);
+            }
+        });
+        
+        socket.on('nhan-vien-mo-phien-chat', async (data) => {
+            try {
+                const { id_phienchat, id_nhanvien, ten_nhanvien } = JSON.parse(data);
+                
+                // Kiểm tra xem phiên chat đã được mở bởi nhân viên khác chưa
+                const existingStaff = await redis.get(`phien-chat-${id_phienchat}-nhan-vien`);
+                if (existingStaff) {
+                    const staffInfo = JSON.parse(existingStaff);
+                    console.log(`Phiên chat ${id_phienchat} đã được mở bởi nhân viên ${staffInfo.id_nhanvien}`);
+                    // Trả về thông báo phiên chat đã được mở
+                    io.to(socket.id).emit('phien-chat-da-duoc-mo', JSON.stringify({
+                        id_phienchat,
+                        id_nhanvien: staffInfo.id_nhanvien,
+                        ten_nhanvien: staffInfo.ten_nhanvien
+                    }));
+                    return;
+                }
+                
+                // Lưu thông tin nhân viên đang mở phiên chat
+                await redis.set(`phien-chat-${id_phienchat}-nhan-vien`, JSON.stringify({
+                    id_nhanvien,
+                    ten_nhanvien,
+                    socket_id: socket.id,
+                    timestamp: Date.now()
+                }));
+                
+                await redis.sadd('list-phien-chat-nhan-vien-mo', id_phienchat);
+                await redis.set(`nhan-vien-${id_nhanvien}-mo-phien-chat`, id_phienchat);
+                
+                console.log(`Nhân viên ${id_nhanvien} (${ten_nhanvien}) đã mở phiên chat ${id_phienchat}`);
+                
+                // Broadcast đến tất cả nhân viên khác
+                io.to('room-nhan-vien-tu-van').emit('phien-chat-duoc-mo', JSON.stringify({
+                    id_phienchat,
+                    id_nhanvien,
+                    ten_nhanvien
+                }));
+            } catch (error) {
+                console.error('Error processing nhan-vien-mo-phien-chat:', error);
+            }
+        });
+        
+        socket.on('nhan-vien-dong-phien-chat', async (data) => {
+            try {
+                const { id_phienchat, id_nhanvien } = JSON.parse(data);
+                
+                // Xóa thông tin nhân viên đang mở phiên chat
+                await redis.del(`phien-chat-${id_phienchat}-nhan-vien`);
+                await redis.srem('list-phien-chat-nhan-vien-mo', id_phienchat);
+                await redis.del(`nhan-vien-${id_nhanvien}-mo-phien-chat`);
+                
+                console.log(`Nhân viên ${id_nhanvien} đã đóng phiên chat ${id_phienchat}`);
+                
+                // Broadcast đến tất cả nhân viên khác
+                io.to('room-nhan-vien-tu-van').emit('phien-chat-duoc-dong', JSON.stringify({
+                    id_phienchat,
+                    id_nhanvien
+                }));
+            } catch (error) {
+                console.error('Error processing nhan-vien-dong-phien-chat:', error);
             }
         });
         socket.on('nhan-vien-gui-tin-nhan', (data) => {

@@ -115,9 +115,40 @@ module.exports = (subscriber, io, redis) => {
             }
         }
         else if (channel === "nhan-vien-mo-phien-chat"){
-            const { id, id_nhanvien } = JSON.parse(message);
+            const data = JSON.parse(message);
+            const { id, id_nhanvien, ten_nhanvien } = data;
+            
+            // Lưu thông tin vào Redis
+            await redis.set(`phien-chat-${id}-nhan-vien`, JSON.stringify({
+                id_nhanvien,
+                ten_nhanvien,
+                timestamp: Date.now()
+            }));
+            
             await redis.sadd('list-phien-chat-nhan-vien-mo', id);
             await redis.set(`nhan-vien-${id_nhanvien}-mo-phien-chat`, id);
+            
+            // Broadcast đến tất cả nhân viên
+            io.to('room-nhan-vien-tu-van').emit('phien-chat-duoc-mo', JSON.stringify({
+                id_phienchat: id,
+                id_nhanvien,
+                ten_nhanvien
+            }));
+        }
+        else if (channel === "nhan-vien-dong-phien-chat"){
+            const data = JSON.parse(message);
+            const { id, id_nhanvien } = data;
+            
+            // Xóa thông tin khỏi Redis
+            await redis.del(`phien-chat-${id}-nhan-vien`);
+            await redis.srem('list-phien-chat-nhan-vien-mo', id);
+            await redis.del(`nhan-vien-${id_nhanvien}-mo-phien-chat`);
+            
+            // Broadcast đến tất cả nhân viên
+            io.to('room-nhan-vien-tu-van').emit('phien-chat-duoc-dong', JSON.stringify({
+                id_phienchat: id,
+                id_nhanvien
+            }));
         }
         
         // Xử lý các sự kiện video call
