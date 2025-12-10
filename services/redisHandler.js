@@ -118,12 +118,17 @@ module.exports = (subscriber, io, redis) => {
             const data = JSON.parse(message);
             const { id, id_nhanvien, ten_nhanvien } = data;
             
-            // Lưu thông tin vào Redis
-            await redis.set(`phien-chat-${id}-nhan-vien`, JSON.stringify({
+            console.log('DEBUG - Redis handler nhan-vien-mo-phien-chat:', { id, id_nhanvien, ten_nhanvien });
+            
+            // Lưu thông tin vào Redis với fallback cho ten_nhanvien
+            const staffDataToSave = {
                 id_nhanvien,
-                ten_nhanvien,
+                ten_nhanvien: ten_nhanvien || `Nhân viên #${id_nhanvien}`,
                 timestamp: Date.now()
-            }));
+            };
+            
+            console.log('DEBUG - Redis handler saving:', staffDataToSave);
+            await redis.set(`phien-chat-${id}-nhan-vien`, JSON.stringify(staffDataToSave));
             
             await redis.sadd('list-phien-chat-nhan-vien-mo', id);
             await redis.set(`nhan-vien-${id_nhanvien}-mo-phien-chat`, id);
@@ -132,7 +137,7 @@ module.exports = (subscriber, io, redis) => {
             io.to('room-nhan-vien-tu-van').emit('phien-chat-duoc-mo', JSON.stringify({
                 id_phienchat: id,
                 id_nhanvien,
-                ten_nhanvien
+                ten_nhanvien: staffDataToSave.ten_nhanvien
             }));
         }
         else if (channel === "nhan-vien-dong-phien-chat"){
