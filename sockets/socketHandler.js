@@ -191,11 +191,13 @@ module.exports = (io, redis) => {
             try {
                 const { id_phienchat, id_nhanvien, ten_nhanvien } = JSON.parse(data);
                 
+                console.log('DEBUG - nhan-vien-mo-phien-chat received:', { id_phienchat, id_nhanvien, ten_nhanvien });
+                
                 // Kiểm tra xem phiên chat đã được mở bởi nhân viên khác chưa
                 const existingStaff = await redis.get(`phien-chat-${id_phienchat}-nhan-vien`);
                 if (existingStaff) {
                     const staffInfo = JSON.parse(existingStaff);
-                    console.log(`Phiên chat ${id_phienchat} đã được mở bởi nhân viên ${staffInfo.id_nhanvien}`);
+                    console.log(`Phiên chat ${id_phienchat} đã được mở bởi nhân viên ${staffInfo.id_nhanvien} (${staffInfo.ten_nhanvien})`);
                     // Trả về thông báo phiên chat đã được mở
                     io.to(socket.id).emit('phien-chat-da-duoc-mo', JSON.stringify({
                         id_phienchat,
@@ -205,24 +207,27 @@ module.exports = (io, redis) => {
                     return;
                 }
                 
-                // Lưu thông tin nhân viên đang mở phiên chat
-                await redis.set(`phien-chat-${id_phienchat}-nhan-vien`, JSON.stringify({
+                // Lưu thông tin nhân viên đang mở phiên chat với fallback cho ten_nhanvien
+                const staffDataToSave = {
                     id_nhanvien,
-                    ten_nhanvien,
+                    ten_nhanvien: ten_nhanvien || `Nhân viên #${id_nhanvien}`,
                     socket_id: socket.id,
                     timestamp: Date.now()
-                }));
+                };
+                
+                console.log('DEBUG - Saving to Redis:', staffDataToSave);
+                await redis.set(`phien-chat-${id_phienchat}-nhan-vien`, JSON.stringify(staffDataToSave));
                 
                 await redis.sadd('list-phien-chat-nhan-vien-mo', id_phienchat);
                 await redis.set(`nhan-vien-${id_nhanvien}-mo-phien-chat`, id_phienchat);
                 
-                console.log(`Nhân viên ${id_nhanvien} (${ten_nhanvien}) đã mở phiên chat ${id_phienchat}`);
+                console.log(`Nhân viên ${id_nhanvien} (${staffDataToSave.ten_nhanvien}) đã mở phiên chat ${id_phienchat}`);
                 
                 // Broadcast đến tất cả nhân viên khác
                 io.to('room-nhan-vien-tu-van').emit('phien-chat-duoc-mo', JSON.stringify({
                     id_phienchat,
                     id_nhanvien,
-                    ten_nhanvien
+                    ten_nhanvien: staffDataToSave.ten_nhanvien
                 }));
             } catch (error) {
                 console.error('Error processing nhan-vien-mo-phien-chat:', error);
